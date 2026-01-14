@@ -36,8 +36,33 @@ export class TelegramBotService implements OnModuleInit {
       const messageId = ctx.message.message_id;
       const userId = ctx.from.id;
       const userName = ctx.from.first_name || ctx.from.username;
+      const colorizedPrefix = userName?.startsWith('V') ? '🔵🔵🔵' : '🟣🟣🟣'; // TODO: change
       const text = ctx.message.text;
+      const botUsername = ctx.botInfo.username;
+      const isMentioned = text.includes(`@${botUsername}`);
+      const isPrivate = ctx.chat.type === 'private';
+
       if (text.startsWith('/')) return;
+
+      if (isPrivate || isMentioned) {
+        // Убираем имя бота из текста, если это упоминание
+        const prompt = text.replace(`@${botUsername}`, '').trim();
+
+        if (prompt.length > 0) {
+          // Показываем статус "печатает..."
+          await ctx.sendChatAction('typing');
+
+          const aiResponse = await this.aggressionAnalyzer.callDeepSeek(prompt);
+
+          await ctx.reply(aiResponse, {
+            parse_mode: 'Markdown',
+            reply_parameters: {
+              message_id: ctx.message.message_id,
+            },
+          });
+          return;
+        }
+      }
 
       try {
         // 1. Анализ
@@ -53,10 +78,15 @@ export class TelegramBotService implements OnModuleInit {
             return;
           }
 
-          await ctx.reply(
-            `✨ **${userName}** (вежливо): \n"${analysis.content}"`,
-            { parse_mode: 'Markdown' },
-          );
+          if (analysis.content) {
+            await ctx.reply(
+              `${colorizedPrefix} **${userName}**: \n"${analysis.content}"`,
+              {
+                parse_mode: 'Markdown',
+                disable_notification: true,
+              },
+            );
+          }
         }
       } catch (e) {
         this.logger.error(

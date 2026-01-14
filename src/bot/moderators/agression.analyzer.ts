@@ -2,6 +2,10 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { lastValueFrom } from 'rxjs';
+import {
+  AGRESSION_ANALYZED_PROMPT,
+  IAgressionPromptResult,
+} from './agression-analyzer.prompt';
 
 @Injectable()
 export class AggressionAnalyzer {
@@ -10,7 +14,14 @@ export class AggressionAnalyzer {
   private readonly apiKey: string;
 
   // Белый список слов, которые похожи на мат, но ими не являются
-  private readonly WHITE_LIST = ['есть', 'быть', 'команда', 'хотя', 'тоже'];
+  private readonly WHITE_LIST = [
+    'есть',
+    'быть',
+    'команда',
+    'хотя',
+    'тоже',
+    'для',
+  ];
 
   // Используем корни слов для более широкого охвата
   private readonly BANNED_VOCABULARY = [
@@ -35,6 +46,7 @@ export class AggressionAnalyzer {
     'заеб',
     'отъеб',
     'наху',
+    'уеб',
   ];
 
   private readonly HOMOGLYPHS: Record<string, string> = {
@@ -72,8 +84,8 @@ export class AggressionAnalyzer {
 
     if (hasProfanity) {
       this.logger.warn(`Фильтр сработал на: "${content}"`);
-      const rephrased = await this.rephraseMessage(content);
-      return { content: rephrased, isAggressive: true };
+
+      return { content: '', isAggressive: true };
     }
 
     // 2. AI проверка на токсичность и скрытую агрессию
@@ -165,30 +177,31 @@ export class AggressionAnalyzer {
   private async analyzeWithAI(
     content: string,
   ): Promise<{ isAggressive: boolean; correctedText: string }> {
-    const prompt = `Анализируй сообщение на токсичность и агрессию. 
-    Если сообщение доброе и нормальное, ответь "CLEAN". 
-    Если есть агрессия, мат или токсичность, ответь в формате: FIXED: <исправленный вежливый текст>.
-    Сообщение: "${content}"`;
+    let response: string = await this.callDeepSeek(
+      AGRESSION_ANALYZED_PROMPT(content),
+    );
 
-    const response = await this.callDeepSeek(prompt);
+    try {
+      const splittedResponse = response.split('');
+      const start = splittedResponse.findIndex((e) => e === '{');
+      const end = splittedResponse.reverse().findIndex((e) => e === '}');
+      console.log(response);
+      const result = JSON.parse(
+        response.slice(start, response.length - end),
+      ) as IAgressionPromptResult;
 
-    if (response.startsWith('FIXED:')) {
       return {
-        isAggressive: true,
-        correctedText: response.replace('FIXED:', '').trim(),
+        isAggressive: result.is_toxic_to_partner,
+        correctedText: result.suggested_text ?? '',
       };
+    } catch (err) {
+      this.logger.error(err);
     }
 
     return { isAggressive: false, correctedText: content };
   }
 
-  private async rephraseMessage(content: string): Promise<string> {
-    const prompt = `Перепиши сообщение максимально вежливо, сохранив суть, но убрав мат и агрессию. Дай только текст ответа.
-    Оригинал: "${content}"`;
-    return await this.callDeepSeek(prompt);
-  }
-
-  private async callDeepSeek(prompt: string): Promise<string> {
+  async callDeepSeek(prompt: string): Promise<string> {
     try {
       const response: any = await lastValueFrom(
         this.httpService.post(
@@ -196,7 +209,7 @@ export class AggressionAnalyzer {
           {
             model: 'deepseek-chat',
             messages: [{ role: 'user', content: prompt }],
-            temperature: 0.2, // Уменьшил для стабильности ответов
+            temperature: 0.2,
           },
           {
             headers: {
