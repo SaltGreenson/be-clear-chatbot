@@ -1,7 +1,18 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Context, Telegraf } from 'telegraf';
+import { Cache } from 'cache-manager';
+import { Context, NarrowedContext, Telegraf } from 'telegraf';
+import { Message, Update } from 'telegraf/typings/core/types/typegram';
 import { AggressionAnalyzer } from './moderators/agression.analyzer';
+
+interface IChatHistory {
+  timestamp: Date;
+  userId: string;
+  userName: string;
+  messageId: string;
+  chatId: string;
+}
 
 @Injectable()
 export class TelegramBotService implements OnModuleInit {
@@ -15,6 +26,7 @@ export class TelegramBotService implements OnModuleInit {
   constructor(
     private readonly configService: ConfigService,
     private readonly aggressionAnalyzer: AggressionAnalyzer,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {
     const token = this.configService.getOrThrow<string>('TELEGRAM_BOT_TOKEN');
     this.bot = new Telegraf(token);
@@ -25,6 +37,24 @@ export class TelegramBotService implements OnModuleInit {
     this.launch();
   }
 
+  private async saveHistory(
+    ctx: NarrowedContext<Context<Update>, Update.MessageUpdate<Message>>,
+  ) {
+    if (!('text' in ctx.message)) {
+      return false;
+    }
+
+    const messageId = ctx.message.message_id;
+    const message = ctx.message.text;
+    const userId = ctx.from.id;
+    const userName = ctx.from.first_name || ctx.from.username;
+    const chatId = ctx.chat.id;
+
+    const lastKey = `${chatId}-${userId}-last`;
+
+    await this.cacheManager.set(lastKey, message, 180);
+  }
+
   private setupHandlers() {
     // Команда /start
     this.bot.start((ctx) => this.handleStart(ctx));
@@ -32,6 +62,8 @@ export class TelegramBotService implements OnModuleInit {
     // Обработка сообщений
     this.bot.on('message', async (ctx) => {
       if (!('text' in ctx.message)) return;
+
+      const isRemove = await this.saveHistory(ctx);
 
       const messageId = ctx.message.message_id;
       const userId = ctx.from.id;
