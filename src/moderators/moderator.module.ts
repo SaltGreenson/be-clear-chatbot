@@ -1,10 +1,12 @@
-import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
+import { AiModule } from '../ai-model';
+import { DatabaseModule } from '../database';
 import { AggressionModerator } from './agression';
+import { Moderator } from './moderator.service';
 
 @Module({
-  exports: [AggressionModerator],
-  providers: [AggressionModerator],
-  imports: [HttpModule],
+  exports: [Moderator],
+  providers: [AggressionModerator, Moderator],
+  imports: [AiModule, DatabaseModule],
 })
 export class ModeratorModule {}

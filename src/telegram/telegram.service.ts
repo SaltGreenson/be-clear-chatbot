@@ -1,10 +1,10 @@
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Cache } from 'cache-manager';
-import { Context, NarrowedContext, Telegraf } from 'telegraf';
-import { Message, Update } from 'telegraf/typings/core/types/typegram';
-import { AggressionModerator } from '../moderators/agression';
+import { Context, Telegraf } from 'telegraf';
+import { AiModelService } from '../ai-model';
+import { MessageService } from '../database';
+import { Moderator, ModeratorAction } from '../moderators';
+import { TextMessageCtx } from '../shared';
 
 @Injectable()
 export class TelegramService {
@@ -13,11 +13,182 @@ export class TelegramService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly aggressionModerator: AggressionModerator,
-    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly ai: AiModelService,
+    private readonly messageDb: MessageService,
+    private readonly moderator: Moderator,
   ) {
     const token = this.configService.getOrThrow<string>('TELEGRAM_BOT_TOKEN');
-    this.bot = new Telegraf(token);
+    this.bot = new Telegraf(token, { handlerTimeout: 900_000 });
+  }
+
+  private setupHandlers() {
+    this.bot.start((ctx) => this.handleStart(ctx));
+
+    this.bot.on('message', async (_ctx) => {
+      if (!('text' in _ctx.message)) {
+        return;
+      }
+
+      const ctx = _ctx as TextMessageCtx;
+
+      const message = await this.messageDb.saveMessage(ctx);
+
+      const colorizedPrefix = message.userName?.startsWith('V')
+        ? '🔵🔵🔵'
+        : '🟣🟣🟣'; // TODO: change
+
+      if (message.text.startsWith('/')) {
+        return;
+      }
+
+      const isMentioned = await this.processMentionedMessage(ctx);
+
+      if (isMentioned) {
+        return;
+      }
+
+      await this.processModeration(ctx);
+    });
+  }
+
+  private async processModeration(ctx: TextMessageCtx) {
+    const moderationStream = this.moderator.processMessage(ctx);
+
+    const textOnlyStream = async function* (this: TelegramService) {
+      const { messages } = await this.messageDb.getMessages(ctx);
+
+      const validIds = new Set(messages.map((m) => m.id));
+
+      validIds.add(ctx.message.message_id);
+
+      for await (const result of moderationStream) {
+        if (result.action === ModeratorAction.DELETE) {
+          const idToDelete = result.messageId || ctx.message.message_id;
+
+          if (validIds.has(idToDelete)) {
+            this.logger.log(`Удаляю сообщение: ${idToDelete}`);
+
+            await this.messageDb.bulkDelete(ctx, [idToDelete]);
+
+            await ctx.telegram
+              .deleteMessage(ctx.chat.id, idToDelete)
+              .catch((err) => {
+                this.logger.error(
+                  `Ошибка удаления ${idToDelete}: ${err.message}`,
+                );
+              });
+          }
+
+          continue;
+        }
+
+        if (result.action === ModeratorAction.STREAM && result.text) {
+          yield result.text;
+        }
+      }
+    }.bind(this);
+
+    await this.streamMessage(ctx, textOnlyStream(), '⏳ *Корректирую...*');
+  }
+
+  private async processMentionedMessage(ctx: TextMessageCtx): Promise<boolean> {
+    if (!('text' in ctx.message)) {
+      return false;
+    }
+
+    const text = ctx.message.text;
+    const botUsername = ctx.botInfo.username;
+    const isMentioned = text.includes(`@${botUsername}`);
+    const isPrivate = ctx.chat.type === 'private';
+
+    if (!(isPrivate || isMentioned)) {
+      return false;
+    }
+
+    const prompt = text.replace(`@${botUsername}`, '').trim();
+
+    if (prompt.length <= 0) {
+      return true;
+    }
+
+    const stream = await this.ai.service.stream(
+      'У тебя IQ 160. Ты считаешься очень умным, помоги пользователю с его запросом. Не задавай в ответе уточняющих вопросов пользователю. Напиши только ответ на его вопрос',
+      prompt,
+    );
+
+    await this.streamMessage(ctx, stream);
+
+    return true;
+  }
+
+  private async streamMessage(
+    ctx: Context,
+    stream: AsyncGenerator<string>,
+    placeholderText: string = '⏳ *Секунду...*',
+  ) {
+    let fullText = '';
+    let displayedText = '';
+    let isFinished = false;
+    let sentMessage: any = null; // Изначально сообщения нет
+    let updateTimer: NodeJS.Timeout | null = null;
+
+    try {
+      for await (const chunk of stream) {
+        fullText += chunk;
+
+        // Создаем сообщение только при получении первого чанка текста
+        if (!sentMessage && fullText.trim().length > 0) {
+          sentMessage = await ctx.reply(placeholderText, {
+            parse_mode: 'Markdown',
+            disable_notification: true,
+          });
+
+          // Запускаем таймер обновления только после того, как сообщение создано
+          updateTimer = setInterval(async () => {
+            if (
+              fullText !== displayedText &&
+              fullText.trim().length > 0 &&
+              sentMessage
+            ) {
+              const textToSet = isFinished ? fullText : fullText + ' ▎';
+              try {
+                await ctx.sendChatAction('typing');
+                await ctx.telegram.editMessageText(
+                  sentMessage.chat.id,
+                  sentMessage.message_id,
+                  undefined,
+                  textToSet,
+                  { parse_mode: 'Markdown' },
+                );
+                displayedText = fullText;
+              } catch (e) {
+                await ctx.telegram
+                  .editMessageText(
+                    sentMessage.chat.id,
+                    sentMessage.message_id,
+                    undefined,
+                    textToSet,
+                  )
+                  .catch(() => {});
+              }
+            }
+
+            if (isFinished && fullText === displayedText && updateTimer) {
+              clearInterval(updateTimer);
+            }
+          }, 2000);
+        }
+      }
+
+      isFinished = true;
+    } catch (e) {
+      this.logger.error('Stream error', e);
+      isFinished = true;
+      if (updateTimer) clearInterval(updateTimer);
+      if (sentMessage) {
+        await ctx.reply('⚠️ Произошла ошибка при загрузке данных.');
+      }
+    }
   }
 
   onModuleInit() {
@@ -27,119 +198,10 @@ export class TelegramService {
 
   async onModuleDestroy() {
     this.logger.log('Stopping Telegram Bot...');
+
     await this.bot.stop('SIGTERM');
+
     this.logger.log('Bot stopped successfully');
-  }
-
-  private async saveHistory(
-    ctx: NarrowedContext<Context<Update>, Update.MessageUpdate<Message>>,
-  ) {
-    if (!('text' in ctx.message)) {
-      return false;
-    }
-
-    const messageId = ctx.message.message_id;
-    const message = ctx.message.text;
-    const userId = ctx.from.id;
-    const userName = ctx.from.first_name || ctx.from.username;
-    const chatId = ctx.chat.id;
-
-    const lastKey = `${chatId}-${userId}-last`;
-
-    await this.cacheManager.set(lastKey, message, 180);
-
-    return false;
-  }
-
-  private setupHandlers() {
-    // Команда /start
-    this.bot.start((ctx) => this.handleStart(ctx));
-
-    // Обработка сообщений
-    this.bot.on('message', async (ctx) => {
-      if (!('text' in ctx.message)) return;
-
-      const isRemove = await this.saveHistory(ctx);
-
-      const messageId = ctx.message.message_id;
-      const userId = ctx.from.id;
-      const userName = ctx.from.first_name || ctx.from.username;
-      const colorizedPrefix = userName?.startsWith('V') ? '🔵🔵🔵' : '🟣🟣🟣'; // TODO: change
-      const text = ctx.message.text;
-      const botUsername = ctx.botInfo.username;
-      const isMentioned = text.includes(`@${botUsername}`);
-      const isPrivate = ctx.chat.type === 'private';
-
-      if (text.startsWith('/')) return;
-
-      if (isPrivate || isMentioned) {
-        // Убираем имя бота из текста, если это упоминание
-        const prompt = text.replace(`@${botUsername}`, '').trim();
-
-        if (prompt.length > 0) {
-          // Показываем статус "печатает..."
-          await ctx.sendChatAction('typing');
-
-          const aiResponse =
-            await this.aggressionModerator.callDeepSeek(prompt);
-
-          await ctx.reply(aiResponse, {
-            parse_mode: 'Markdown',
-            reply_parameters: {
-              message_id: ctx.message.message_id,
-            },
-          });
-          return;
-        }
-      }
-
-      try {
-        // 1. Анализ
-        const analysis = await this.aggressionModerator.processMessage(text);
-
-        if (analysis.isAggressive) {
-          try {
-            await ctx.deleteMessage(messageId);
-          } catch (e) {
-            this.logger.error(
-              'Не удалось удалить сообщение. Проверьте права администратора.',
-            );
-            return;
-          }
-
-          if (analysis.content) {
-            await ctx.reply(
-              `${colorizedPrefix} **${userName}**: \n"${analysis.content}"`,
-              {
-                parse_mode: 'Markdown',
-                disable_notification: true,
-              },
-            );
-          }
-        }
-      } catch (e) {
-        this.logger.error(
-          `Ошибка при обработке сообщения: ${(e as Error).message}`,
-        );
-        this.logger.error(e);
-      }
-    });
-
-    // Callback кнопки
-    this.bot.on('callback_query', async (ctx) => {
-      // Ваша логика обработки кнопок (replace_ и т.д.)
-    });
-  }
-
-  private async handleAggressiveMessage(
-    ctx: any,
-    original: string,
-    corrected: string,
-    analysis: any,
-    hasSwear: boolean,
-  ) {
-    // Ваша логика с кнопками и ответом пользователю
-    // ...
   }
 
   private handleStart(ctx: Context) {
