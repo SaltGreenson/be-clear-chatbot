@@ -8,6 +8,7 @@ const WHITE_LIST = [
   'оля',
   'хай',
   'хэй',
+  'небудет', // TODO: add fix to collaps words
 ];
 
 const BANNED_VOCABULARY = [
