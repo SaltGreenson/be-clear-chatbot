@@ -1,31 +1,19 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
 import { Context, NarrowedContext, Telegraf } from 'telegraf';
 import { Message, Update } from 'telegraf/typings/core/types/typegram';
-import { AggressionAnalyzer } from './moderators/agression.analyzer';
-
-interface IChatHistory {
-  timestamp: Date;
-  userId: string;
-  userName: string;
-  messageId: string;
-  chatId: string;
-}
+import { AggressionModerator } from '../moderators/agression';
 
 @Injectable()
-export class TelegramBotService implements OnModuleInit {
+export class TelegramService {
   private bot: Telegraf;
-  private readonly logger = new Logger(TelegramBotService.name);
-
-  // Временное хранилище (в идеале заменить на TypeORM/Prisma + Redis)
-  private userStats: Map<number, { warnings: number; corrected: number }> =
-    new Map();
+  private readonly logger = new Logger(TelegramService.name);
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly aggressionAnalyzer: AggressionAnalyzer,
+    private readonly aggressionModerator: AggressionModerator,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {
     const token = this.configService.getOrThrow<string>('TELEGRAM_BOT_TOKEN');
@@ -35,6 +23,12 @@ export class TelegramBotService implements OnModuleInit {
   onModuleInit() {
     this.setupHandlers();
     this.launch();
+  }
+
+  async onModuleDestroy() {
+    this.logger.log('Stopping Telegram Bot...');
+    await this.bot.stop('SIGTERM');
+    this.logger.log('Bot stopped successfully');
   }
 
   private async saveHistory(
@@ -53,6 +47,8 @@ export class TelegramBotService implements OnModuleInit {
     const lastKey = `${chatId}-${userId}-last`;
 
     await this.cacheManager.set(lastKey, message, 180);
+
+    return false;
   }
 
   private setupHandlers() {
@@ -84,7 +80,8 @@ export class TelegramBotService implements OnModuleInit {
           // Показываем статус "печатает..."
           await ctx.sendChatAction('typing');
 
-          const aiResponse = await this.aggressionAnalyzer.callDeepSeek(prompt);
+          const aiResponse =
+            await this.aggressionModerator.callDeepSeek(prompt);
 
           await ctx.reply(aiResponse, {
             parse_mode: 'Markdown',
@@ -98,7 +95,7 @@ export class TelegramBotService implements OnModuleInit {
 
       try {
         // 1. Анализ
-        const analysis = await this.aggressionAnalyzer.processMessage(text);
+        const analysis = await this.aggressionModerator.processMessage(text);
 
         if (analysis.isAggressive) {
           try {
