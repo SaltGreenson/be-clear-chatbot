@@ -2,7 +2,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { TextMessageCtx } from '../../shared';
-import { IMessage } from '../interfaces';
+import { IMessage } from './../interfaces/IMessage';
 
 @Injectable()
 export class MessageService {
@@ -40,12 +40,6 @@ export class MessageService {
 
     const isFullHistory = (messages.length / this.MAX_HISTORY_SIZE) * 100 > 50;
 
-    console.log(
-      'isFullHistory',
-      isFullHistory,
-      ((this.MAX_HISTORY_SIZE - messages.length) / this.MAX_HISTORY_SIZE) * 100,
-    );
-
     return {
       messages,
       isFullHistory,
@@ -64,11 +58,38 @@ export class MessageService {
     await this.cache.set(key, newMessages, this.TTL);
   }
 
+  async delete(ctx: TextMessageCtx, messageId: number) {
+    const { messages } = await this.getMessages(ctx);
+
+    const { newMessages, removed } = messages.reduce(
+      (acc, curr) => {
+        if (curr.id === messageId) {
+          acc.removed = curr;
+          return acc;
+        }
+
+        acc.newMessages.push(curr);
+
+        return acc;
+      },
+      {
+        newMessages: [],
+        removed: null,
+      } as { newMessages: IMessage[]; removed: IMessage | null },
+    );
+
+    const key = this.getHistoryKey(ctx);
+
+    await this.cache.set(key, newMessages, this.TTL);
+
+    return removed;
+  }
+
   async stringifiedMessages(
     ctx: TextMessageCtx,
   ): Promise<{ stringifiedMessage: string; isFullHistory: boolean }> {
     const { messages, isFullHistory } = await this.getMessages(ctx);
-    console.log('messsages length', messages.length);
+
     const strMessages = messages
       .map((m) => `[ID: ${m.id}, User: ${m.userName}]: ${m.text}`)
       .join('\n');

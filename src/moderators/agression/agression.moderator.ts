@@ -28,6 +28,6 @@ export class AggressionModerator implements IModerator {
       };
     }
 
-    return { action: ModeratorAction.DELETE };
+    return;
   }
 }

@@ -31,15 +31,7 @@ export class TelegramService {
 
       const ctx = _ctx as TextMessageCtx;
 
-      const message = await this.messageDb.saveMessage(ctx);
-
-      const colorizedPrefix = message.userName?.startsWith('V')
-        ? '🔵🔵🔵'
-        : '🟣🟣🟣'; // TODO: change
-
-      if (message.text.startsWith('/')) {
-        return;
-      }
+      await this.messageDb.saveMessage(ctx);
 
       const isMentioned = await this.processMentionedMessage(ctx);
 
@@ -88,7 +80,11 @@ export class TelegramService {
       }
     }.bind(this);
 
-    await this.streamMessage(ctx, textOnlyStream(), '⏳ *Корректирую...*');
+    const fullStreamText = await this.streamMessage(
+      ctx,
+      textOnlyStream(),
+      '⏳ *Корректирую...*',
+    );
   }
 
   private async processMentionedMessage(ctx: TextMessageCtx): Promise<boolean> {
@@ -181,13 +177,20 @@ export class TelegramService {
       }
 
       isFinished = true;
+
+      return fullText;
     } catch (e) {
       this.logger.error('Stream error', e);
+
       isFinished = true;
+
       if (updateTimer) clearInterval(updateTimer);
+
       if (sentMessage) {
         await ctx.reply('⚠️ Произошла ошибка при загрузке данных.');
       }
+
+      return null;
     }
   }
 

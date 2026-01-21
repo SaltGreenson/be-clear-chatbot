@@ -8,7 +8,6 @@ const WHITE_LIST = [
   'оля',
   'хай',
   'хэй',
-  'небудет', // TODO: add fix to collaps words
 ];
 
 const BANNED_VOCABULARY = [
@@ -20,8 +19,9 @@ const BANNED_VOCABULARY = [
   'пизд',
   'пздц',
   'ебат',
+  'ебан',
+  'ёбан',
   'ебал',
-  'ебу',
   'еблан',
   'ебт',
   'сука',
@@ -53,6 +53,7 @@ const HOMOGLYPHS: Record<string, string> = {
   '3': 'з',
   '4': 'ч',
   '6': 'б',
+  '@': 'a',
   u: 'у',
 };
 
