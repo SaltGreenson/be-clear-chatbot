@@ -8,19 +8,39 @@ import { IMessage } from './../interfaces/IMessage';
 export class MessageService {
   constructor(@Inject(CACHE_MANAGER) private readonly cache: Cache) {}
 
-  async saveMessage(ctx: TextMessageCtx) {
+  async saveMessageFromCtx(ctx: TextMessageCtx) {
     const key = this.getHistoryKey(ctx);
 
-    const { messages } = await this.getMessages(ctx);
+    let { messages } = await this.getMessages(ctx);
 
     const message: IMessage = {
       id: ctx.message.message_id,
       text: ctx.message.text,
-      timestamp: new Date().getTime(),
+      timestamp: new Date(ctx.message.date).getTime(),
       userName: ctx.from.first_name || ctx.from.username || 'Guest',
     };
 
     messages.unshift(message);
+
+    messages = messages.sort((a, b) => b.timestamp - a.timestamp);
+
+    await this.cache.set(
+      key,
+      messages.slice(0, this.MAX_HISTORY_SIZE),
+      this.TTL,
+    );
+
+    return message;
+  }
+
+  async create(ctx: TextMessageCtx, message: IMessage) {
+    const key = this.getHistoryKey(ctx);
+
+    let { messages } = await this.getMessages(ctx);
+
+    messages.unshift(message);
+
+    messages = messages.sort((a, b) => b.timestamp - a.timestamp);
 
     await this.cache.set(
       key,
@@ -91,8 +111,15 @@ export class MessageService {
     const { messages, isFullHistory } = await this.getMessages(ctx);
 
     const strMessages = messages
-      .map((m) => `[ID: ${m.id}, User: ${m.userName}]: ${m.text}`)
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map(
+        (m) =>
+          `[ID: ${m.id}, User: ${m.userName}, Timestamp: ${m.timestamp}, isHistoryOnly: ${m.isHistoryOnly ? '"ТОЛЬКО ИСТОРИЯ, НЕЛЬЗЯ ИЗМЕНЯТЬ"' : 'МОЖНО ИЗМЕНЯТЬ'}]: ${m.text}`,
+      )
       .join('\n');
+
+    console.log(strMessages);
+    console.log('================', messages.length);
 
     return { stringifiedMessage: strMessages, isFullHistory };
   }

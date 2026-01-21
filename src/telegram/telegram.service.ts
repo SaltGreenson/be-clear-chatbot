@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Context, Telegraf } from 'telegraf';
 import { AiModelService } from '../ai-model';
 import { MessageService } from '../database';
+import { IMessage } from '../database/interfaces';
 import { Moderator, ModeratorAction } from '../moderators';
 import { TextMessageCtx } from '../shared';
 
@@ -10,6 +11,8 @@ import { TextMessageCtx } from '../shared';
 export class TelegramService {
   private bot: Telegraf;
   private readonly logger = new Logger(TelegramService.name);
+  private moderationTimers = new Map<number, NodeJS.Timeout>();
+  private isProcessing = new Map<number, boolean>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -30,23 +33,48 @@ export class TelegramService {
       }
 
       const ctx = _ctx as TextMessageCtx;
+      const chatId = ctx.chat.id;
 
-      await this.messageDb.saveMessage(ctx);
+      await this.messageDb.saveMessageFromCtx(ctx);
 
       const isMentioned = await this.processMentionedMessage(ctx);
-
       if (isMentioned) {
         return;
       }
 
-      await this.processModeration(ctx);
+      if (this.moderationTimers.has(chatId)) {
+        clearTimeout(this.moderationTimers.get(chatId));
+      }
+
+      const timer = setTimeout(async () => {
+        if (this.isProcessing.get(chatId)) {
+          this.logger.warn(
+            `Модерация чата ${chatId} уже в процессе, пропускаю дубль`,
+          );
+          return;
+        }
+
+        try {
+          this.isProcessing.set(chatId, true);
+          this.moderationTimers.delete(chatId);
+
+          await this.processModeration(ctx);
+        } catch (e) {
+          this.logger.error('Ошибка в процессе отложенной модерации', e);
+        } finally {
+          this.isProcessing.set(chatId, false);
+        }
+      }, 1000);
+
+      this.moderationTimers.set(chatId, timer);
     });
   }
 
   private async processModeration(ctx: TextMessageCtx) {
     const moderationStream = this.moderator.processMessage(ctx);
+    let lastRemovedMessage: IMessage | null = null;
 
-    const textOnlyStream = async function* (this: TelegramService) {
+    const internalStream = async function* (this: TelegramService) {
       const { messages } = await this.messageDb.getMessages(ctx);
 
       const validIds = new Set(messages.map((m) => m.id));
@@ -60,15 +88,19 @@ export class TelegramService {
           if (validIds.has(idToDelete)) {
             this.logger.log(`Удаляю сообщение: ${idToDelete}`);
 
-            await this.messageDb.bulkDelete(ctx, [idToDelete]);
+            try {
+              await ctx.telegram.deleteMessage(ctx.chat.id, idToDelete);
 
-            await ctx.telegram
-              .deleteMessage(ctx.chat.id, idToDelete)
-              .catch((err) => {
-                this.logger.error(
-                  `Ошибка удаления ${idToDelete}: ${err.message}`,
-                );
-              });
+              const removed = await this.messageDb.delete(ctx, idToDelete);
+
+              if (removed) {
+                lastRemovedMessage = removed;
+              }
+            } catch (err) {
+              this.logger.error(
+                `Ошибка удаления ${idToDelete}: ${(err as Error).message}`,
+              );
+            }
           }
 
           continue;
@@ -82,9 +114,18 @@ export class TelegramService {
 
     const fullStreamText = await this.streamMessage(
       ctx,
-      textOnlyStream(),
+      internalStream(),
       '⏳ *Корректирую...*',
     );
+
+    if (lastRemovedMessage && fullStreamText) {
+      (lastRemovedMessage as IMessage).text = fullStreamText;
+
+      await this.messageDb.create(ctx, {
+        ...(lastRemovedMessage as IMessage),
+        isHistoryOnly: true,
+      });
+    }
   }
 
   private async processMentionedMessage(ctx: TextMessageCtx): Promise<boolean> {

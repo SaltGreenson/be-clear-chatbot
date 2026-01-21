@@ -3,4 +3,5 @@ export interface IMessage {
   userName: string;
   text: string;
   timestamp: number;
+  isHistoryOnly?: boolean;
 }

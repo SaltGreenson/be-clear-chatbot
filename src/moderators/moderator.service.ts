@@ -29,6 +29,7 @@ export class Moderator implements IModerator {
       this.logger.warn(`Фильтр сработал на: "${ctx.message.text}"`);
 
       yield { action: ModeratorAction.DELETE };
+      return;
     }
 
     const { stringifiedMessage, isFullHistory } =
@@ -50,8 +51,6 @@ export class Moderator implements IModerator {
     this.logger.log('Analyze result', analyze);
 
     if (analyze?.status === ModeratorStatus.AGRESSIVE) {
-      yield { action: ModeratorAction.DELETE };
-
       return yield* this.aggressionModerator.processMessage(ctx, analyze);
     }
 
