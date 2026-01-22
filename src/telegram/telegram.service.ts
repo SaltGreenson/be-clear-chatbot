@@ -46,27 +46,27 @@ export class TelegramService {
         clearTimeout(this.moderationTimers.get(chatId));
       }
 
-      const timer = setTimeout(async () => {
-        if (this.isProcessing.get(chatId)) {
-          this.logger.warn(
-            `Модерация чата ${chatId} уже в процессе, пропускаю дубль`,
-          );
-          return;
-        }
+      // const timer = setTimeout(async () => {
+      if (this.isProcessing.get(chatId)) {
+        this.logger.warn(
+          `Модерация чата ${chatId} уже в процессе, пропускаю дубль`,
+        );
+        return;
+      }
 
-        try {
-          this.isProcessing.set(chatId, true);
-          this.moderationTimers.delete(chatId);
+      try {
+        this.isProcessing.set(chatId, true);
+        // this.moderationTimers.delete(chatId);
 
-          await this.processModeration(ctx);
-        } catch (e) {
-          this.logger.error('Ошибка в процессе отложенной модерации', e);
-        } finally {
-          this.isProcessing.set(chatId, false);
-        }
-      }, 1000);
+        await this.processModeration(ctx);
+      } catch (e) {
+        this.logger.error('Ошибка в процессе отложенной модерации', e);
+      } finally {
+        this.isProcessing.set(chatId, false);
+      }
+      // }, 1000);
 
-      this.moderationTimers.set(chatId, timer);
+      // this.moderationTimers.set(chatId, timer);
     });
   }
 

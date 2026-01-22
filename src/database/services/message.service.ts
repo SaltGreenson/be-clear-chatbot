@@ -118,9 +118,6 @@ export class MessageService {
       )
       .join('\n');
 
-    console.log(strMessages);
-    console.log('================', messages.length);
-
     return { stringifiedMessage: strMessages, isFullHistory };
   }
 
@@ -129,7 +126,7 @@ export class MessageService {
   }
 
   private get MAX_HISTORY_SIZE() {
-    return 50;
+    return 20;
   }
 
   private get TTL() {
