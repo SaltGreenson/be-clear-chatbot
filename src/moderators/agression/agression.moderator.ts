@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AiModelService } from '../../ai-model';
+import { MessageService } from '../../database';
 import { TextMessageCtx } from '../../shared';
 import { IAnalyzeResult } from '../analyze-prompt.const';
 import { IModerator, ModeratorAction } from '../shared';
@@ -7,7 +8,10 @@ import { AGRESSION_CHANGE_MESSAGE_PROMPT } from './constants';
 
 @Injectable()
 export class AggressionModerator implements IModerator {
-  constructor(private readonly ai: AiModelService) {}
+  constructor(
+    private readonly ai: AiModelService,
+    private readonly messageDb: MessageService,
+  ) {}
 
   async *processMessage(ctx: TextMessageCtx, scanResult: IAnalyzeResult) {
     if (scanResult.toxicMessageIds?.length > 0) {
@@ -16,9 +20,12 @@ export class AggressionModerator implements IModerator {
       }
     }
 
+    const { stringifiedMessage } =
+      await this.messageDb.stringifiedMessages(ctx);
+
     const aiStream = this.ai.service.stream(
       AGRESSION_CHANGE_MESSAGE_PROMPT(scanResult),
-      ctx.message.text,
+      stringifiedMessage,
     );
 
     for await (const chunk of aiStream) {

@@ -57,72 +57,91 @@ const HOMOGLYPHS: Record<string, string> = {
   '@': 'a',
   u: 'у',
 };
+const BANNED_ROOTS = ['хуй', 'пизд', 'еба', 'ебл', 'бля', 'сук', 'хуя', 'хуе'];
 
 export const profanityFilter = (text: string): boolean => {
-  // Проверка 1: Весь текст без пробелов (против "н а х у й")
-  const collapsedTotal = normalizeAndCollapse(text);
-
-  for (const banned of BANNED_VOCABULARY) {
-    if (collapsedTotal.includes(banned)) {
-      // Проверяем, не является ли это слово частью белого списка
-      const isWhiteListed = WHITE_LIST.some(
-        (white) =>
-          collapsedTotal.includes(white) &&
-          white.length >= collapsedTotal.length - 1,
-      );
-      if (!isWhiteListed) return true;
-    }
+  // 1. Сначала проверяем слова по отдельности (как было раньше)
+  // Это защищает "сэкономлю", так как "экон" — слишком длинный префикс
+  const words = normalizeAndSplit(text);
+  for (const word of words) {
+    if (checkWord(word)) return true;
   }
 
-  // Проверка 2: По словам (Левенштейн для опечаток)
-  const words = text.toLowerCase().split(/\s+/);
-  for (const word of words) {
-    const cleanWord = normalizeAndCollapse(word);
-    if (cleanWord.length < 3 || WHITE_LIST.includes(cleanWord)) continue;
+  // 2. ТЕПЕРЬ ЛОВИМ "РАЗРЯДКУ" (н а х у й, н.а.х.у.й)
+  // Удаляем ВООБЩЕ всё, кроме букв
+  const fullCollapsed = text
+    .toLowerCase()
+    .replace(/[^а-яёa-z]/g, '') // удаляем точки, пробелы, спецсимволы
+    // заменяем латиницу на кириллицу (гомоглифы)
+    .split('')
+    .map((char) => HOMOGLYPHS[char] || char)
+    .join('');
 
-    for (const banned of BANNED_VOCABULARY) {
-      const distance = getLevenshteinDistance(cleanWord, banned);
+  for (const root of BANNED_ROOTS) {
+    if (fullCollapsed.includes(root)) {
+      // Чтобы не забанить "не будет" (небудет) или "с экономлю",
+      // проверяем: если корень найден, является ли он САМИМ текстом
+      // или в тексте почти нет других букв.
 
-      // Более строгие пороги: только 1 опечатка для коротких матов
-      const threshold = banned.length > 5 ? 2 : 1;
-      if (distance <= threshold) return true;
+      const index = fullCollapsed.indexOf(root);
+      const prefix = fullCollapsed.substring(0, index);
+      const suffix = fullCollapsed.substring(index + root.length);
+
+      // Если общая длина "мусора" вокруг корня очень мала (например, "н а х у й" -> "нахуй")
+      // то есть префикс и суффикс короткие (как типичные приставки) — это бан.
+      if (prefix.length <= 2 && suffix.length <= 3) {
+        // Проверяем, не является ли это "небудет" (префикс "н", суффикс "дет")
+        if (root === 'еба' && prefix === 'н' && suffix.startsWith('дет'))
+          continue;
+
+        return true;
+      }
     }
   }
 
   return false;
 };
 
-const getLevenshteinDistance = (a: string, b: string): number => {
-  const matrix: number[][] = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+function checkWord(word: string): boolean {
+  if (word.length < 3) return false;
+  const collapsed = word.replace(/(.)\1+/g, '$1');
 
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1,
-        );
-      }
+  for (const root of BANNED_ROOTS) {
+    const index = collapsed.indexOf(root);
+    if (index !== -1) {
+      const prefix = collapsed.substring(0, index);
+
+      if (prefix.length > 4) continue;
+
+      const russianPrefixes = [
+        '',
+        'а',
+        'за',
+        'на',
+        'по',
+        'вы',
+        'пере',
+        'об',
+        'до',
+        'у',
+        'при',
+        'от',
+        'с',
+        'раз',
+        'рас',
+      ];
+      if (prefix.length > 0 && !russianPrefixes.includes(prefix)) continue;
+
+      return true;
     }
   }
-  return matrix[b.length][a.length];
-};
+  return false;
+}
 
-const normalizeAndCollapse = (text: string): string => {
-  let normalized = text.toLowerCase();
-
-  for (const [latin, cyrillic] of Object.entries(HOMOGLYPHS)) {
-    normalized = normalized.replace(new RegExp(latin, 'g'), cyrillic);
+const normalizeAndSplit = (text: string): string[] => {
+  let res = text.toLowerCase();
+  for (const [lat, cyr] of Object.entries(HOMOGLYPHS)) {
+    res = res.replace(new RegExp(lat, 'g'), cyr);
   }
-
-  // Оставляем только буквы
-  const clean = normalized.replace(/[^а-яё]/g, '');
-
-  // Схлопываем повторы: "ахуееееено" -> "ахуено"
-  return clean.replace(/(.)\1+/g, '$1');
+  return res.replace(/[^а-яё\s]/g, '').split(/\s+/);
 };

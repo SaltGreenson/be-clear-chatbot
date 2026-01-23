@@ -17,6 +17,8 @@ export class DeepseekService implements IAiModel {
     systemPrompt: string,
     userPrompt: string,
   ): AsyncGenerator<string> {
+    this.logger.log({ type: 'stream', systemPrompt, userPrompt });
+
     try {
       const response = await this.httpService.axiosRef.post(
         this.API_URL,
@@ -80,6 +82,8 @@ export class DeepseekService implements IAiModel {
     userPrompt: string,
   ): Promise<object | null> {
     try {
+      this.logger.log({ type: 'request', systemPrompt, userPrompt });
+
       const response: any = await lastValueFrom(
         this.httpService.post(
           this.API_URL,

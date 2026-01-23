@@ -126,7 +126,7 @@ export class MessageService {
   }
 
   private get MAX_HISTORY_SIZE() {
-    return 20;
+    return 10;
   }
 
   private get TTL() {

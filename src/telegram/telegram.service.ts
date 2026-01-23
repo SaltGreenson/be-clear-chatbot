@@ -38,6 +38,7 @@ export class TelegramService {
       await this.messageDb.saveMessageFromCtx(ctx);
 
       const isMentioned = await this.processMentionedMessage(ctx);
+
       if (isMentioned) {
         return;
       }
