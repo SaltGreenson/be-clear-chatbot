@@ -11,7 +11,7 @@ import { TextMessageCtx } from '../shared';
 export class TelegramService {
   private bot: Telegraf;
   private readonly logger = new Logger(TelegramService.name);
-  private moderationTimers = new Map<number, NodeJS.Timeout>();
+  // private moderationTimers = new Map<number, NodeJS.Timeout>();
   private isProcessing = new Map<number, boolean>();
 
   constructor(
@@ -43,9 +43,9 @@ export class TelegramService {
         return;
       }
 
-      if (this.moderationTimers.has(chatId)) {
-        clearTimeout(this.moderationTimers.get(chatId));
-      }
+      // if (this.moderationTimers.has(chatId)) {
+      //   clearTimeout(this.moderationTimers.get(chatId));
+      // }
 
       // const timer = setTimeout(async () => {
       if (this.isProcessing.get(chatId)) {
@@ -182,39 +182,39 @@ export class TelegramService {
           });
 
           // Запускаем таймер обновления только после того, как сообщение создано
-          updateTimer = setInterval(async () => {
-            if (
-              fullText !== displayedText &&
-              fullText.trim().length > 0 &&
-              sentMessage
-            ) {
-              const textToSet = isFinished ? fullText : fullText + ' ▎';
-              try {
-                await ctx.sendChatAction('typing');
-                await ctx.telegram.editMessageText(
+          // updateTimer = setInterval(async () => {
+          if (
+            fullText !== displayedText &&
+            fullText.trim().length > 0 &&
+            sentMessage
+          ) {
+            const textToSet = isFinished ? fullText : fullText + ' ▎';
+            try {
+              await ctx.sendChatAction('typing');
+              await ctx.telegram.editMessageText(
+                sentMessage.chat.id,
+                sentMessage.message_id,
+                undefined,
+                textToSet,
+                { parse_mode: 'Markdown' },
+              );
+              displayedText = fullText;
+            } catch (e) {
+              await ctx.telegram
+                .editMessageText(
                   sentMessage.chat.id,
                   sentMessage.message_id,
                   undefined,
                   textToSet,
-                  { parse_mode: 'Markdown' },
-                );
-                displayedText = fullText;
-              } catch (e) {
-                await ctx.telegram
-                  .editMessageText(
-                    sentMessage.chat.id,
-                    sentMessage.message_id,
-                    undefined,
-                    textToSet,
-                  )
-                  .catch(() => {});
-              }
+                )
+                .catch(() => {});
             }
+          }
 
-            if (isFinished && fullText === displayedText && updateTimer) {
-              clearInterval(updateTimer);
-            }
-          }, 2000);
+          if (isFinished && fullText === displayedText && updateTimer) {
+            clearInterval(updateTimer);
+          }
+          // }, 2000);
         }
       }
 

@@ -33,6 +33,29 @@ export class MessageService {
     return message;
   }
 
+  async saveLastUserMessage(ctx: TextMessageCtx) {
+    const key = this.getUserLastMessageKey(ctx);
+
+    const message: IMessage = {
+      id: ctx.message.message_id,
+      text: ctx.message.text,
+      timestamp: new Date(ctx.message.date).getTime(),
+      userName: ctx.from.first_name || ctx.from.username || 'Guest',
+    };
+
+    await this.cache.set(key, message, this.TTL);
+
+    return message;
+  }
+
+  async isSpamLastMessage(ctx: TextMessageCtx) {
+    const key = this.getUserLastMessageKey(ctx);
+
+    const lastSaved = await this.cache.get<IMessage>(key);
+
+    return lastSaved?.text === ctx.message.text;
+  }
+
   async create(ctx: TextMessageCtx, message: IMessage) {
     const key = this.getHistoryKey(ctx);
 
@@ -123,6 +146,10 @@ export class MessageService {
 
   private getHistoryKey(ctx: TextMessageCtx) {
     return `${ctx.chat.id}_chat_history`;
+  }
+
+  private getUserLastMessageKey(ctx: TextMessageCtx) {
+    return `${ctx.chat.id}_${ctx.message.from.id}_last_message`;
   }
 
   private get MAX_HISTORY_SIZE() {

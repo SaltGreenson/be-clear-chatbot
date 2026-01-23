@@ -23,6 +23,17 @@ export class Moderator implements IModerator {
   ) {}
 
   async *processMessage(ctx: TextMessageCtx): AsyncGenerator<IModeratorResult> {
+    const isSpam = await this.messageDb.isSpamLastMessage(ctx);
+    await this.messageDb.saveLastUserMessage(ctx);
+
+    if (isSpam) {
+      this.logger.warn(
+        `Спам сообщение: "${ctx.message.from.first_name || ctx.message.from.username}: ${ctx.message.text}"`,
+      );
+      yield { action: ModeratorAction.DELETE };
+      return;
+    }
+
     const hasProfanity = profanityFilter(ctx.message.text);
 
     if (hasProfanity) {
@@ -36,7 +47,8 @@ export class Moderator implements IModerator {
       await this.messageDb.stringifiedMessages(ctx);
 
     if (!isFullHistory) {
-      return { action: ModeratorAction.KEEP };
+      yield { action: ModeratorAction.KEEP };
+      return;
     }
 
     const prompt = `История сообщений: 
