@@ -182,39 +182,39 @@ export class TelegramService {
           });
 
           // Запускаем таймер обновления только после того, как сообщение создано
-          // updateTimer = setInterval(async () => {
-          if (
-            fullText !== displayedText &&
-            fullText.trim().length > 0 &&
-            sentMessage
-          ) {
-            const textToSet = isFinished ? fullText : fullText + ' ▎';
-            try {
-              await ctx.sendChatAction('typing');
-              await ctx.telegram.editMessageText(
-                sentMessage.chat.id,
-                sentMessage.message_id,
-                undefined,
-                textToSet,
-                { parse_mode: 'Markdown' },
-              );
-              displayedText = fullText;
-            } catch (e) {
-              await ctx.telegram
-                .editMessageText(
+          updateTimer = setInterval(async () => {
+            if (
+              fullText !== displayedText &&
+              fullText.trim().length > 0 &&
+              sentMessage
+            ) {
+              const textToSet = isFinished ? fullText : fullText + ' ▎';
+              try {
+                await ctx.sendChatAction('typing');
+                await ctx.telegram.editMessageText(
                   sentMessage.chat.id,
                   sentMessage.message_id,
                   undefined,
                   textToSet,
-                )
-                .catch(() => {});
+                  { parse_mode: 'Markdown' },
+                );
+                displayedText = fullText;
+              } catch {
+                await ctx.telegram
+                  .editMessageText(
+                    sentMessage.chat.id,
+                    sentMessage.message_id,
+                    undefined,
+                    textToSet,
+                  )
+                  .catch((e) => this.logger.error(e));
+              }
             }
-          }
 
-          if (isFinished && fullText === displayedText && updateTimer) {
-            clearInterval(updateTimer);
-          }
-          // }, 2000);
+            if (isFinished && fullText === displayedText && updateTimer) {
+              clearInterval(updateTimer);
+            }
+          }, 2000);
         }
       }
 

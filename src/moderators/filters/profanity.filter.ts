@@ -57,7 +57,7 @@ const HOMOGLYPHS: Record<string, string> = {
   '@': 'a',
   u: 'у',
 };
-const BANNED_ROOTS = ['хуй', 'пизд', 'еба', 'ебл', 'бля', 'сук', 'хуя', 'хуе'];
+const BANNED_ROOTS = ['хуй', 'пизд', 'ебл', 'бля', 'сук', 'хуя', 'хуе'];
 
 export const profanityFilter = (text: string): boolean => {
   // 1. Сначала проверяем слова по отдельности (как было раньше)
